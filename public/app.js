@@ -2,6 +2,7 @@
 (function(){
 "use strict";
 const app=document.getElementById('app');
+const EMPRESA={nombre:'Ferrodistribuciones',nit:'1234089022',direccion:'Carrera 4 # 29E-288',tel:'320 750 1732',correo:'ferrodistribuciones.ip@gmail.com'};
 const LOGO='/logo.png';
 const LOGO_IMG=new Image();LOGO_IMG.src='/logo-pdf.jpg';
 const LISTS={cf:'Precio contado ferretería',cr:'Precio crédito ferretería',m1:'Precio 1 mostrador',m2:'Precio 2 mostrador',crm:'Precio crédito ferreterías municipal',esp:'Especial contado Sincelejo (columna retirada)'};
@@ -166,7 +167,7 @@ function authScreen(){
 function render(){
   pending=false;
   const sy=window.scrollY;
-  if(S.state!=='ready'){app.innerHTML=shell('',authScreen());const f=app.querySelector('form input');if(f&&!typing())f.focus();return}
+  if(S.state!=='ready'){app.innerHTML=shell('',authScreen()+`<p class="muted" style="text-align:center;font-size:.8rem;margin-top:18px">${EMPRESA.nombre} · NIT ${EMPRESA.nit}<br>${EMPRESA.direccion} · ${EMPRESA.tel} · ${EMPRESA.correo}</p>`);const f=app.querySelector('form input');if(f&&!typing())f.focus();return}
   const roles=myRoles();
   if(!S.role||!roles.includes(S.role)){S.role=roles.includes('gerencia')?'gerencia':(roles[0]||null)}
   const nav=(S.role?NAV[S.role]:[]).concat([['avisos','Avisos'],['reglas','Reglas']]);
@@ -732,7 +733,7 @@ function buildPdf(title,num,d,withPrices){
   try{doc.addImage(LOGO_IMG,'JPEG',M,8,70,18.1)}catch(e){doc.setFont('helvetica','bold');doc.setFontSize(16);doc.text('FERRODISTRIBUCIONES',M,y)}
   doc.setFont('helvetica','bold');doc.setFontSize(14);doc.setTextColor(20,20,20);doc.text(title,W-M,y,{align:'right'});
   doc.setFontSize(11);doc.setTextColor(236,50,55);doc.text('N.º '+num,W-M,y+6,{align:'right'});doc.setTextColor(20,20,20);
-  doc.setFont('helvetica','normal');doc.setFontSize(9);doc.text(d.ref+' · '+fmtDT(d.date),W-M,y+11,{align:'right'});y=31;
+  doc.setFont('helvetica','normal');doc.setFontSize(9);doc.text(d.ref+' · '+fmtDT(d.date),W-M,y+11,{align:'right'});doc.setFontSize(8);doc.setTextColor(90,90,90);doc.text(`NIT ${EMPRESA.nit} · ${EMPRESA.direccion}`,M,30);doc.text(`Tel. ${EMPRESA.tel} · ${EMPRESA.correo}`,M,34);doc.setTextColor(20,20,20);y=38;
   doc.setDrawColor(236,50,55);doc.setLineWidth(0.8);doc.line(M,y,W-M,y);doc.setLineWidth(0.2);y+=7;doc.setFontSize(10);doc.setFont('helvetica','normal');
   const kv=[['Cliente',`${d.customer.name}${d.customer.doc?' · '+d.customer.doc:''}`],['Dirección',d.address],['Teléfono',d.customer.phone||'—'],['Pago',PAY[d.payment]],['Vendedor',nm(d.seller)]];
   if(d.dispatch)kv.push(['Despacho',`${d.dispatch.driver} · ${d.dispatch.vehicle} · ${fmtDT(d.dispatch.at)}`]);
