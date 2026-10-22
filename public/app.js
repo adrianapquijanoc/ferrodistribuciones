@@ -101,6 +101,7 @@ function applySync(d){
   d.reads.forEach(id=>S.reads.add(id));
   d.audit.forEach(a=>S.AU[a.id]=a);if(d.audit.length)S.audit=Object.values(S.AU).sort((a,b)=>b.id-a.id).slice(0,1000);
   S.lastSeen=Math.max(S.lastSeen||0,d.auditSeen||0);
+  if(d.mailConfigured!==undefined)S.mailConfigured=d.mailConfigured;
   S.rev=d.rev;
 }
 let syncing=null,syncAgain=false;
@@ -420,11 +421,14 @@ VIEWS.equipo=function(){
   <section class="panel stack"><h2 style="margin-top:0">Nuevo usuario</h2><div class="grid2">
     <div class="field"><label class="lbl" for="nu-name">Nombre completo</label><input id="nu-name" data-k="nu-name" value="${esc(S.f['nu-name']||'')}" placeholder="Ej. Carlos Pérez"></div>
     <div class="field"><label class="lbl" for="nu-user">Usuario para entrar</label><input id="nu-user" data-k="nu-user" value="${esc(S.f['nu-user']||'')}" placeholder="Ej. carlos.perez" autocapitalize="none"></div>
+    <div class="field"><label class="lbl" for="nu-email">Correo (opcional, para avisos)</label><input id="nu-email" data-k="nu-email" type="email" value="${esc(S.f['nu-email']||'')}" placeholder="nombre@gmail.com" autocapitalize="none"></div>
     <div class="field"><label class="lbl" for="nu-pw">Clave temporal</label><div class="actions" style="flex-wrap:nowrap"><input class="in" id="nu-pw" data-k="nu-pw" value="${esc(S.f['nu-pw']||'')}" autocomplete="off"><button class="btn sm" data-a="u-gen" data-k="nu-pw" type="button">Generar</button></div></div></div>
     <div><span class="lbl">Roles</span><div class="actions" style="margin-top:6px">${Object.keys(ROLES).map(r=>`<label class="check" style="font-weight:500"><input type="checkbox" data-a="nu-role" data-r="${r}" ${nr.includes(r)?'checked':''}> ${ROLES[r]}</label>`).join('')}</div></div>
     <div class="actions"><button class="btn primary" data-a="u-create">Crear usuario</button><span class="muted" style="font-size:.85rem">Entrégale el usuario y la clave temporal en persona o por un medio privado.</span></div></section>
-  <h2>Personas</h2>${us.length?`<div class="scroll"><table class="tbl"><thead><tr><th>Persona</th><th>Usuario</th>${Object.keys(ROLES).map(r=>`<th>${ROLES[r]}</th>`).join('')}<th>Estado</th><th></th></tr></thead><tbody>${us.map(u=>`<tr${u.active?'':' style="opacity:.6"'}><td><b>${esc(u.name)}</b>${u.id===S.uid?' '+pill('Tú','acc'):''}</td><td class="code">${esc(u.username||'')}</td>${Object.keys(ROLES).map(r=>`<td><input type="checkbox" data-a="u-role" data-id="${esc(u.id)}" data-r="${r}" ${u.roles.includes(r)?'checked':''} aria-label="${ROLES[r]} para ${esc(u.name)}"></td>`).join('')}<td>${u.active?pill('Activo','ok'):pill('Bloqueado','bad')}</td><td><div class="actions">${u.id!==S.uid?`<button class="btn sm ${u.active?'danger':'ok'}" data-a="u-active" data-id="${esc(u.id)}" data-v="${u.active?'0':'1'}">${u.active?'Bloquear':'Desbloquear'}</button>`:''}<button class="btn sm" data-a="u-reset-open" data-id="${esc(u.id)}">Restablecer clave</button></div>
+  <h2>Personas</h2>${us.length?`<div class="scroll"><table class="tbl"><thead><tr><th>Persona</th><th>Usuario</th>${Object.keys(ROLES).map(r=>`<th>${ROLES[r]}</th>`).join('')}<th>Avisos por correo</th><th>Estado</th><th></th></tr></thead><tbody>${us.map(u=>`<tr${u.active?'':' style="opacity:.6"'}><td><b>${esc(u.name)}</b>${u.id===S.uid?' '+pill('Tú','acc'):''}</td><td class="code">${esc(u.username||'')}</td>${Object.keys(ROLES).map(r=>`<td><input type="checkbox" data-a="u-role" data-id="${esc(u.id)}" data-r="${r}" ${u.roles.includes(r)?'checked':''} aria-label="${ROLES[r]} para ${esc(u.name)}"></td>`).join('')}<td style="min-width:230px"><div class="stack" style="gap:6px"><div class="actions" style="flex-wrap:nowrap"><input class="in" type="email" id="ue-${esc(u.id)}" data-k="ue-${esc(u.id)}" value="${esc(S.f['ue-'+u.id]??(u.email||''))}" placeholder="Sin correo" aria-label="Correo de ${esc(u.name)}" autocapitalize="none"><button class="btn sm" data-a="u-email" data-id="${esc(u.id)}">Guardar</button></div><div class="actions"><label class="check" style="font-weight:500"><input type="checkbox" data-a="u-mailon" data-id="${esc(u.id)}" ${u.emailOn?'checked':''} ${u.email?'':'disabled'}> Recibir avisos</label>${u.email&&S.mailConfigured?`<button class="btn sm" data-a="u-mailtest" data-id="${esc(u.id)}">Enviar prueba</button>`:''}</div></div></td><td>${u.active?pill('Activo','ok'):pill('Bloqueado','bad')}</td><td><div class="actions">${u.id!==S.uid?`<button class="btn sm ${u.active?'danger':'ok'}" data-a="u-active" data-id="${esc(u.id)}" data-v="${u.active?'0':'1'}">${u.active?'Bloquear':'Desbloquear'}</button>`:''}<button class="btn sm" data-a="u-reset-open" data-id="${esc(u.id)}">Restablecer clave</button></div>
    ${reset===u.id?`<div class="stack" style="margin-top:8px;min-width:240px"><div class="field"><label class="lbl" for="rp-pw">Clave temporal nueva</label><div class="actions" style="flex-wrap:nowrap"><input class="in" id="rp-pw" data-k="rp-pw" value="${esc(S.f['rp-pw']||'')}" autocomplete="off"><button class="btn sm" data-a="u-gen" data-k="rp-pw" type="button">Generar</button></div></div><div class="actions"><button class="btn sm primary" data-a="u-reset" data-id="${esc(u.id)}">Guardar clave temporal</button><button class="btn sm" data-a="ui" data-k="reset" data-v="">Cancelar</button></div></div>`:''}</td></tr>`).join('')}</tbody></table></div>`:'<div class="empty">Aún no hay usuarios.</div>'}
+  ${S.mailConfigured?'':'<div class="note" style="margin-top:14px"><b>El envío de correos aún no está configurado.</b> Puedes anotar los correos desde ya; los avisos empezarán a llegar cuando se configure Brevo en Cloudflare (ver la guía).</div>'}
+  <div class="note info" style="margin-top:14px">Los avisos por correo llegan solo a quien tenga correo y la casilla "Recibir avisos" marcada. Quien hace una acción no recibe su propio aviso. Hay un límite de 280 correos al día para no pasar del plan gratuito.</div>
   <div class="note info" style="margin-top:14px">Al bloquear a alguien se cierra su sesión de inmediato. Al restablecer una clave, la persona debe crear una nueva al entrar. Todo queda en Auditoría.</div>`;
 };
 
@@ -455,7 +459,7 @@ VIEWS.pedido=function(){
   if(canEditQty(o))actions+=`<button class="btn primary" data-a="o-qty">Guardar cantidades</button>`;
   if(r==='bodega'&&o.status==='por_preparar')actions+=`<button class="btn primary" data-a="o-take">Tomar pedido</button>`;
   if(r==='bodega'&&o.status==='en_preparacion')actions+=`<button class="btn primary" data-a="o-toverify" ${pb.length?'disabled':''}>Enviar a verificación</button>`;
-  if(r==='verificacion'&&o.status==='por_verificar')actions+=`<button class="btn primary" data-a="o-verified" ${(o.lines||[]).some(l=>shipQty(l)>0&&!l.verified)?'disabled':''}>Aprobar verificación</button><button class="btn danger" data-a="ui" data-k="ret" data-v="1">Devolver a preparación</button>`;
+  if(r==='verificacion'&&o.status==='por_verificar')actions+=`<button class="btn primary" data-a="o-verified" ${(o.lines||[]).some(l=>shipQty(l)>0&&!l.verified)||!(o.photos||[]).length?'disabled':''}>Aprobar verificación</button><button class="btn danger" data-a="ui" data-k="ret" data-v="1">Devolver a preparación</button>`;
   if(['por_despachar','despachado','remisionado'].includes(o.status)&&S.dl&&['despacho','gerencia','contabilidad','verificacion'].includes(r))actions+=`<button class="btn" data-a="pdf-del">Orden de entrega (PDF)</button>`;
   if(r==='contabilidad'&&o.status==='despachado')actions+=`<button class="btn primary" data-a="o-rem">Generar remisión</button>`;
   if(o.remisionId&&S.dl&&['contabilidad','gerencia'].includes(r))actions+=`<button class="btn" data-a="pdf-rem" data-id="${esc(o.remisionId)}">Remisión ${esc(o.remisionId)} (PDF)</button>`;
@@ -464,6 +468,7 @@ VIEWS.pedido=function(){
   if(S.ui.ret)forms.push(`<div class="panel stack"><div class="field"><label class="lbl" for="ret-reason">¿Qué está mal? (se envía a bodega)</label><textarea id="ret-reason" data-k="ret-reason">${esc(S.f['ret-reason']||'')}</textarea></div><div class="actions"><button class="btn danger" data-a="o-return">Devolver a preparación</button><button class="btn" data-a="ui" data-k="ret" data-v="">Cancelar</button></div></div>`);
   if(S.ui.void)forms.push(`<div class="panel stack"><div class="field"><label class="lbl" for="void-reason">Motivo de la anulación (obligatorio)</label><textarea id="void-reason" data-k="void-reason">${esc(S.f['void-reason']||'')}</textarea></div><div class="actions"><button class="btn danger" data-a="o-void">Confirmar anulación</button><button class="btn" data-a="ui" data-k="void" data-v="">Cancelar</button></div></div>`);
   if(r==='despacho'&&o.status==='por_despachar')forms.push(`<div class="panel stack"><span class="lbl">Registrar salida</span>${bl.length?`<div class="note bad"><b>No se puede despachar:</b><ul style="margin:4px 0 0">${bl.map(b=>`<li>${esc(b)}</li>`).join('')}</ul></div>`:''}<div class="grid2"><div class="field"><label class="lbl" for="d-driver">Conductor</label><input id="d-driver" data-k="d-driver" value="${esc(S.f['d-driver']||'')}"></div><div class="field"><label class="lbl" for="d-vehicle">Vehículo (placa)</label><input id="d-vehicle" data-k="d-vehicle" value="${esc(S.f['d-vehicle']||'')}" placeholder="Ej. SXT 482"></div></div><div class="actions"><button class="btn primary" data-a="o-dispatch" ${bl.length?'disabled':''}>Registrar salida</button></div></div>`);
+  if(r==='verificacion'&&o.status==='por_verificar')forms.push(photoPanel(o));
   if(r==='bodega'&&o.status==='en_preparacion'&&pb.length)forms.push(`<div class="note">Para enviar a verificación, resuelve: ${pb.map(esc).join('; ')}.</div>`);
   const vd=voidOf(o.id);
   const tl=S.timeline[o.id];
@@ -475,9 +480,18 @@ VIEWS.pedido=function(){
   <div class="panel kv"><span class="lbl">Vendedor</span><span>${esc(nm(o.seller))} · ${fmtDT(o.createdAt)}</span><span class="lbl">Bodega</span><span>${o.picker?esc(nm(o.picker))+' · '+fmtDT(o.takenAt):'—'}</span><span class="lbl">Verificó</span><span>${o.verifier?esc(nm(o.verifier))+' · '+fmtDT(o.verifiedAt):'—'}</span><span class="lbl">Despacho</span><span>${o.dispatch?`${esc(o.dispatch.driver)} · ${esc(o.dispatch.vehicle)} · ${fmtDT(o.dispatch.at)}`:'—'}</span><span class="lbl">Remisión</span><span>${o.remisionId?esc(o.remisionId):'—'}</span></div></div>
   ${actions?`<div class="actions" style="margin-top:14px">${actions}</div>`:''}
   ${forms.length?`<div class="stack" style="margin-top:12px">${forms.join('')}</div>`:''}
+  ${(o.photos||[]).length&&!(r==='verificacion'&&o.status==='por_verificar')?`<h2>Fotos de verificación</h2>${photoGrid(o,false)}`:''}
   <h2>Productos</h2><div class="stack">${(o.lines||[]).map(l=>lineCard(o,l)).join('')}</div>
   <h2>Historial</h2>${tl?(tl.length?`<ul class="timeline">${tl.map(a=>`<li><span class="muted num">${fmtDT(a.at)}</span><span><b>${esc(a.action)}</b> · ${esc(nm(a.by))}${a.role?' ('+esc(ROLES[a.role]||a.role)+')':''}${a.detail?' · '+esc(a.detail):''}${a.reason?`<div class="muted">Motivo: ${esc(a.reason)}</div>`:''}</span></li>`).join('')}</ul>`:'<div class="empty">Sin movimientos.</div>'):'<p class="muted">Cargando historial…</p>'}`;
 };
+function photoGrid(o,canDel){return `<div class="photos">${(o.photos||[]).map(x=>`<figure><a href="/api/photo?id=${esc(x.id)}" target="_blank" rel="noopener"><img src="/api/photo?id=${esc(x.id)}" alt="Foto del pedido ${esc(o.id)}" loading="lazy"></a><figcaption class="muted">${esc(nm(x.by))} · ${fmtDT(x.at)}</figcaption>${canDel?`<button class="btn sm danger" data-a="ph-del" data-id="${esc(x.id)}">Quitar foto</button>`:''}</figure>`).join('')}</div>`}
+function photoPanel(o){
+  const ph=o.photos||[];const allVer=!(o.lines||[]).some(l=>shipQty(l)>0&&!l.verified);
+  return `<div class="panel stack"><span class="lbl">Foto del pedido (obligatoria)</span>
+  <p class="muted" style="margin:0">${!allVer?'Primero marca cada producto como verificado. Después toma la foto del pedido.':ph.length?'Listo. Ya puedes aprobar la verificación, o agregar otra foto.':'Todo verificado. Ahora toma una foto del pedido completo, con los productos a la vista. Sin la foto no se puede aprobar.'}</p>
+  ${ph.length?photoGrid(o,true):''}
+  ${S.ui.phBusy?'<p style="margin:0"><b>Subiendo foto…</b></p>':allVer&&ph.length<4?`<label class="btn ${ph.length?'':'primary'}" style="align-self:flex-start">${ph.length?'Agregar otra foto':'Tomar foto del pedido'}<input type="file" accept="image/*" capture="environment" data-a="ph-file" hidden></label>`:''}</div>`;
+}
 function canEditQty(o){return ['esperando_precio','por_preparar'].includes(o.status)&&((S.role==='ventas'&&o.seller===S.uid)||S.role==='gerencia')}
 function lineCard(o,l){
   const r=S.role;const st=l.pack.state;const p=PACK[st];
@@ -667,6 +681,25 @@ A['l-reset']=el=>orderAct('line-reset',{lineId:el.dataset.l});
 A['l-inc-ok']=el=>run(async()=>{await act('line-inc',{id:S.sel,lineId:el.dataset.l,kind:S.ui.inc.t,qty:S.f['inc-qty'],note:S.f['inc-note']||''});S.ui.inc=null;loadTimeline(S.sel)});
 A['o-toverify']=()=>run(async()=>{const r=await act('order-toverify',{id:S.sel});toast('Enviado a verificación'+(r.newId?`. Las líneas trasladadas quedaron en ${r.newId}.`:'.'));loadTimeline(S.sel)});
 A['o-verified']=()=>orderAct('order-verified',{},'Verificación aprobada.');
+async function shrinkPhoto(f){
+  let img;
+  try{img=await createImageBitmap(f,{imageOrientation:'from-image'})}
+  catch(e){img=await new Promise((ok,ko)=>{const i=new Image();i.onload=()=>ok(i);i.onerror=()=>ko(new Error('No se pudo leer la foto. Intenta tomarla de nuevo.'));i.src=URL.createObjectURL(f)})}
+  const k=Math.min(1,1280/Math.max(img.width,img.height));const c=document.createElement('canvas');c.width=Math.round(img.width*k);c.height=Math.round(img.height*k);
+  const g=c.getContext('2d');g.fillStyle='#fff';g.fillRect(0,0,c.width,c.height);g.drawImage(img,0,0,c.width,c.height);
+  for(const q of [0.72,0.6,0.5,0.4]){const b=await new Promise(r=>c.toBlob(r,'image/jpeg',q));if(b&&b.size<=850000)return b}
+  throw new Error('La foto es demasiado pesada. Intenta tomarla de nuevo.');
+}
+A['ph-file']=el=>{const f=el.files&&el.files[0];el.value='';if(!f)return;const id=S.sel;
+  run(async()=>{S.ui.phBusy=true;render();try{
+    const blob=await shrinkPhoto(f);let r;
+    try{r=await fetch('/api/photo?order='+encodeURIComponent(id),{method:'POST',headers:{'content-type':'image/jpeg','x-ferro':'1','x-role':S.role||''},body:blob,credentials:'same-origin'})}
+    catch(e){throw new Error('No hay conexión con el servidor. Revisa el internet e intenta de nuevo.')}
+    let j={};try{j=await r.json()}catch(e){}
+    if(!r.ok){if(r.status===409)await syncNow().catch(()=>{});throw new Error(j.error||'No se pudo subir la foto.')}
+    await syncNow();toast('Foto subida.');loadTimeline(id);
+  }finally{S.ui.phBusy=false}})};
+A['ph-del']=el=>orderAct('photo-delete',{photoId:el.dataset.id},'Foto quitada.');
 A['o-return']=()=>run(async()=>{const reason=needText('ret-reason','Escribe qué está mal para que bodega lo corrija.');await act('order-return',{id:S.sel,reason});S.ui.ret=null;delete S.f['ret-reason'];loadTimeline(S.sel)});
 A['o-dispatch']=()=>run(async()=>{const driver=needText('d-driver','Escribe el nombre del conductor.');const vehicle=needText('d-vehicle','Escribe la placa del vehículo.');await act('order-dispatch',{id:S.sel,driver,vehicle});delete S.f['d-driver'];delete S.f['d-vehicle'];toast('Salida registrada.');loadTimeline(S.sel)});
 A['o-rem']=()=>run(async()=>{const r=await act('order-remision',{id:S.sel});toast(`Remisión ${r.id} generada.`);loadTimeline(S.sel)});
@@ -683,8 +716,9 @@ A['nu-role']=el=>{const r=S.ui.newRoles||[];S.ui.newRoles=el.checked?r.concat(el
 A['u-create']=()=>run(async()=>{
   const name=needText('nu-name','Escribe el nombre de la persona.');const username=needText('nu-user','Escribe el usuario para entrar.');const password=needText('nu-pw','Escribe o genera una clave temporal.');
   if(!(S.ui.newRoles||[]).length)throw new Error('Marca al menos un rol.');
-  await act('user-create',{name,username,password,roles:S.ui.newRoles});
-  toast(`Usuario creado. Entrégale: usuario ${username.toLowerCase()} · clave ${password}`);['nu-name','nu-user','nu-pw'].forEach(k=>delete S.f[k]);S.ui.newRoles=[];
+  const email=(S.f['nu-email']||'').trim();
+  await act('user-create',{name,username,password,roles:S.ui.newRoles,email,emailOn:!!email});
+  toast(`Usuario creado. Entrégale: usuario ${username.toLowerCase()} · clave ${password}`);['nu-name','nu-user','nu-pw','nu-email'].forEach(k=>delete S.f[k]);S.ui.newRoles=[];
 });
 A['u-role']=el=>run(async()=>{const u=S.users[el.dataset.id];const roles=el.checked?u.roles.concat(el.dataset.r):u.roles.filter(r=>r!==el.dataset.r);await act('user-update',{id:u.id,roles});toast('Roles actualizados.')});
 A['u-active']=el=>run(async()=>{await act('user-update',{id:el.dataset.id,active:el.dataset.v==='1'});toast(el.dataset.v==='1'?'Usuario desbloqueado.':'Usuario bloqueado; su sesión se cerró.')});
@@ -725,6 +759,9 @@ function pushBanner(){
 }
 {const _av=VIEWS.avisos;VIEWS.avisos=function(){return pushPanel()+_av()}}
 if('serviceWorker' in navigator)navigator.serviceWorker.addEventListener('message',e=>{const r=e.data&&e.data.open;if(r&&S.O[r])openOrder(r)});
+A['u-email']=el=>run(async()=>{const id=el.dataset.id;const email=(S.f['ue-'+id]??'').trim();await act('user-update',{id,email,emailOn:email?S.users[id].emailOn||!S.users[id].email:false});delete S.f['ue-'+id];toast(email?'Correo guardado.':'Correo quitado.')});
+A['u-mailon']=el=>run(async()=>{await act('user-update',{id:el.dataset.id,emailOn:el.checked});toast(el.checked?'Avisos por correo activados.':'Avisos por correo desactivados.')});
+A['u-mailtest']=el=>run(async()=>{const r=await act('mail-test',{id:el.dataset.id});toast('Correo de prueba enviado a '+r.to+'. Si no llega en unos minutos, revisa la carpeta de spam.')});
 
 /* ---------- PDF ---------- */
 function buildPdf(title,num,d,withPrices){
@@ -757,7 +794,7 @@ async function savePdf(blob,filename){downloadBlob(blob,filename);toast('PDF des
 function downloadBlob(blob,name){const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove()},2000)}
 
 /* ---------- eventos ---------- */
-app.addEventListener('click',e=>{const el=e.target.closest('[data-a]');if(!el||!app.contains(el))return;const a=el.dataset.a;if(['role','d-field','rerender','l-pack','l-ver','st-role','d-qty','imp-file','imp-retire','imp-stock','d-pick','d-sp','u-role'].includes(a))return;if(A[a]){e.preventDefault();A[a](el)}});
+app.addEventListener('click',e=>{const el=e.target.closest('[data-a]');if(!el||!app.contains(el))return;const a=el.dataset.a;if(['role','d-field','rerender','l-pack','l-ver','st-role','d-qty','imp-file','imp-retire','imp-stock','d-pick','d-sp','u-role','u-mailon','ph-file'].includes(a))return;if(A[a]){e.preventDefault();A[a](el)}});
 app.addEventListener('change',e=>{const el=e.target;const a=el.dataset.a;
   if(el.dataset.k)S.f[el.dataset.k]=el.value;
   if(a==='role'){S.role=el.value;try{localStorage.setItem('ferro-role',S.role)}catch(x){}S.view=null;S.ui={};render();return}
@@ -766,9 +803,10 @@ app.addEventListener('change',e=>{const el=e.target;const a=el.dataset.a;
   if(a==='d-qty'){const v=Math.max(1,Math.round(Number(el.value)||1));S.draft.lines[+el.dataset.i].qty=v;el.value=v;updDraftTotals();return}
   if(a==='rerender'){render();return}
   if(a==='imp-file'){A['imp-file'](el);return}
+  if(a==='ph-file'){A['ph-file'](el);return}
   if(a==='imp-retire'){S.imp.retire=el.checked;render();return}
   if(a==='imp-stock'){S.imp.stock=el.checked;render();return}
-  if(a==='l-pack'||a==='l-ver'||a==='u-role'){A[a](el);return}
+  if(a==='l-pack'||a==='l-ver'||a==='u-role'||a==='u-mailon'){A[a](el);return}
 });
 app.addEventListener('input',e=>{const el=e.target;if(el.dataset.k)S.f[el.dataset.k]=el.value;if(el.dataset.a==='d-field')S.draft[el.dataset.k2]=el.value;
   if(el.dataset.a==='d-sp'){const l=S.draft.lines[+el.dataset.i];l.special=l.special||{price:'',reason:''};l.special[el.dataset.f]=el.value;updDraftTotals();return}

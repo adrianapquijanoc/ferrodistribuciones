@@ -127,3 +127,8 @@ table.tbl{border-collapse:collapse;width:100%;font-size:.92rem}
 .usermenu .menu{position:absolute;right:0;top:calc(100% + 6px);background:#fff;color:#141414;border:1px solid var(--plate-line);border-radius:8px;padding:12px;display:flex;flex-direction:column;gap:8px;min-width:220px;z-index:20;box-shadow:0 8px 24px rgba(0,0,0,.18)}
 .usermenu .menu .btn{background:#fff;color:#141414;border-color:var(--plate-line);justify-content:center}
 @media (display-mode: standalone){header.top{padding-top:0}}
+.photos{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px}
+.photos figure{margin:0;display:flex;flex-direction:column;gap:6px}
+.photos a{display:block}
+.photos img{display:block;width:100%;aspect-ratio:4/3;object-fit:cover;border-radius:8px;border:1px solid var(--line);background:var(--sunk)}
+.photos figcaption{font-size:.8rem}
