@@ -49,16 +49,21 @@ const SCHEMA = [
   `CREATE TABLE IF NOT EXISTS prefs(user_id TEXT PRIMARY KEY, audit_seen INTEGER NOT NULL DEFAULT 0)`,
   `CREATE TABLE IF NOT EXISTS push_subs(endpoint TEXT PRIMARY KEY, user_id TEXT NOT NULL, created_at INTEGER)`,
   `CREATE INDEX IF NOT EXISTS push_user ON push_subs(user_id)`,
-  `INSERT OR REPLACE INTO meta(k,v) VALUES ('schema','2')`,
+  `CREATE TABLE IF NOT EXISTS photos(id TEXT PRIMARY KEY, order_id TEXT NOT NULL, mime TEXT NOT NULL, size INTEGER, data BLOB NOT NULL, at INTEGER, by TEXT)`,
+  `CREATE INDEX IF NOT EXISTS photos_order ON photos(order_id)`,
+  `INSERT OR REPLACE INTO meta(k,v) VALUES ('schema','4')`,
 ];
+const MIGRATIONS = [`ALTER TABLE users ADD COLUMN email TEXT`, `ALTER TABLE users ADD COLUMN email_on INTEGER NOT NULL DEFAULT 0`];
 let schemaReady = false;
 async function ensureSchema(env) {
   if (schemaReady) return;
   try {
     const r = await env.DB.prepare(`SELECT v FROM meta WHERE k='schema'`).first();
-    if (r && r.v === '2') { schemaReady = true; return; }
+    if (r && r.v === '4') { schemaReady = true; return; }
   } catch (e) { /* la tabla aún no existe */ }
-  await env.DB.batch(SCHEMA.map(s => env.DB.prepare(s)));
+  await env.DB.batch(SCHEMA.slice(0, -1).map(s => env.DB.prepare(s)));
+  for (const m of MIGRATIONS) { try { await env.DB.prepare(m).run(); } catch (e) { /* la columna ya existe */ } }
+  await env.DB.prepare(SCHEMA[SCHEMA.length - 1]).run();
   schemaReady = true;
 }
 
@@ -160,11 +165,11 @@ class Tx {
   // Si la sentencia anterior no cambió ninguna fila, aborta todo el lote.
   guard() { return this.add(`INSERT INTO guard(x) SELECT 1 WHERE changes() = 0`); }
   audit(action, entity, ref, detail = '', reason = '') { return this.add(`INSERT INTO audit(at,by,role,action,entity,ref,detail,reason,rev) VALUES (?,?,?,?,?,?,?,?,?)`, this.t, this.user.id, this.role, action, entity, ref || '', detail || '', reason || '', this.rev); }
-  notify(toRoles, toUsers, text, ref = '') { (this.pushes = this.pushes || []).push({ toRoles: toRoles || [], toUsers: (toUsers || []).filter(Boolean) }); return this.add(`INSERT INTO notifications(at,by,to_roles,to_users,text,ref,rev) VALUES (?,?,?,?,?,?,?)`, this.t, this.user.id, JSON.stringify(toRoles || []), JSON.stringify((toUsers || []).filter(Boolean)), text, ref || '', this.rev); }
+  notify(toRoles, toUsers, text, ref = '') { (this.pushes = this.pushes || []).push({ toRoles: toRoles || [], toUsers: (toUsers || []).filter(Boolean), text, ref }); return this.add(`INSERT INTO notifications(at,by,to_roles,to_users,text,ref,rev) VALUES (?,?,?,?,?,?,?)`, this.t, this.user.id, JSON.stringify(toRoles || []), JSON.stringify((toUsers || []).filter(Boolean)), text, ref || '', this.rev); }
   saveOrder(o, version) { o.updatedAt = this.t; this.add(`UPDATE orders SET data = ?, status = ?, version = version + 1, rev = ? WHERE id = ? AND version = ?`, JSON.stringify(o), o.status, this.rev, o.id, version); return this.guard(); }
   async run() {
     if (!this.st.length) return;
-    try { await this.env.DB.batch(this.st); if (this.pushes && this.env.ctx) this.env.ctx.waitUntil(sendPushes(this.env, this.pushes, this.user.id).catch(e => console.error('push', e))); }
+    try { await this.env.DB.batch(this.st); if (this.pushes && this.env.ctx) { this.env.ctx.waitUntil(sendPushes(this.env, this.pushes, this.user.id).catch(e => console.error('push', e))); this.env.ctx.waitUntil(sendEmails(this.env, this.pushes, this.user).catch(e => console.error('correo', e))); } }
     catch (e) {
       const m = String(e && (e.message || e));
       if (/CHECK constraint failed/i.test(m)) throw new HttpError(409, 'Otra persona cambió este pedido al mismo tiempo. Ya se cargó la versión actual; revisa y vuelve a intentar.');
@@ -217,6 +222,50 @@ async function sendPushes(env, pushes, actorId) {
     } catch (e) { console.error('push', e && e.message); }
   }));
 }
+// ---------- avisos por correo (Brevo) ----------
+const mailConfigured = env => !!(env.BREVO_API_KEY && env.MAIL_FROM);
+const escHtml = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+async function brevoSend(env, to, subject, texts, link) {
+  const html = `<div style="font-family:Arial,sans-serif;color:#141414;max-width:560px"><div style="background:#fbcb2b;padding:10px 14px;font-weight:bold;letter-spacing:.05em">FERRODISTRIBUCIONES · PEDIDOS</div>`
+    + `<div style="padding:14px;border:1px solid #ddd;border-top:0">${texts.map(t => `<p style="margin:0 0 10px">${escHtml(t)}</p>`).join('')}`
+    + `<p style="margin:16px 0 0"><a href="${escHtml(link)}" style="background:#141414;color:#fff;padding:10px 16px;text-decoration:none;border-radius:6px;display:inline-block">Abrir en la aplicación</a></p></div>`
+    + `<p style="font-size:12px;color:#777">Recibes este correo porque gerencia activó tus avisos por correo en la aplicación de pedidos de Ferrodistribuciones.</p></div>`;
+  const r = await fetch(env.BREVO_URL || 'https://api.brevo.com/v3/smtp/email', {
+    method: 'POST',
+    headers: { 'api-key': env.BREVO_API_KEY, 'content-type': 'application/json', accept: 'application/json' },
+    body: JSON.stringify({ sender: { email: env.MAIL_FROM, name: env.MAIL_FROM_NAME || 'Ferro Pedidos' }, to: [{ email: to.email, name: to.name }], subject, htmlContent: html, textContent: texts.join('\n\n') + '\n\nAbrir: ' + link }),
+  });
+  if (!r.ok) { let m = ''; try { m = (await r.json()).message || ''; } catch (e) {} throw new Error(`Brevo respondió ${r.status}${m ? ': ' + m : ''}`); }
+}
+async function mailQuota(env, n) {
+  const k = 'mail-' + new Date(now() - 5 * 3600000).toISOString().slice(0, 10);
+  const limit = int(env.MAIL_DAILY_LIMIT) || 280;
+  await env.DB.prepare(`INSERT OR IGNORE INTO counters(k,v) VALUES (?,0)`).bind(k).run();
+  const r = await env.DB.prepare(`UPDATE counters SET v = v + ? WHERE k = ? AND v + ? <= ? RETURNING v`).bind(n, k, n, limit).first();
+  return !!r;
+}
+async function sendEmails(env, pushes, actor) {
+  if (!mailConfigured(env)) return;
+  const us = (await env.DB.prepare(`SELECT id, name, roles, email FROM users WHERE active = 1 AND email_on = 1 AND email IS NOT NULL AND email <> ''`).all()).results;
+  const per = {};
+  for (const u of us) {
+    if (u.id === actor.id) continue;
+    const roles = parse(u.roles) || [];
+    const mine = pushes.filter(p => p.toUsers.includes(u.id) || p.toRoles.some(r => roles.includes(r)));
+    if (mine.length) per[u.id] = { u, items: mine };
+  }
+  const list = Object.values(per).slice(0, 30);
+  if (!list.length) return;
+  if (!(await mailQuota(env, list.length))) { console.error('correo: se alcanzó el límite diario'); return; }
+  const base = env.PUBLIC_URL || '';
+  await Promise.all(list.map(async ({ u, items }) => {
+    const ref = items.find(i => i.ref)?.ref || '';
+    const subject = items.length === 1 ? items[0].text.slice(0, 120) : `${items.length} avisos nuevos en Ferro Pedidos`;
+    try { await brevoSend(env, u, subject, items.map(i => i.text), base + '/' + (ref ? '#' + ref : '')); } catch (e) { console.error('correo', u.id, e.message); }
+  }));
+}
+const validEmail = e => !e || (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e) && e.length <= 120);
+
 function validEndpoint(u) {
   try { const x = new URL(u); return x.protocol === 'https:' && u.length < 1000; } catch (e) { return false; }
 }
@@ -559,10 +608,44 @@ A['order-verified'] = async (env, u, role, b) => {
   const { o, version } = await getOrder(env, b.id);
   if (o.status !== 'por_verificar') throw bad('El pedido no está por verificar.');
   if (o.lines.some(l => shipQty(l) > 0 && !l.verified)) throw bad('Verifica todas las líneas antes de aprobar.');
+  if (!(o.photos || []).length) throw bad('Sube al menos una foto del pedido antes de aprobar la verificación.');
   const t = await tx(env, u, role);
   Object.assign(o, { status: 'por_despachar', statusAt: t.t, verifier: u.id, verifiedAt: t.t });
   t.saveOrder(o, version).audit('Aprobó la verificación', 'pedido', o.id);
   t.notify(['despacho'], [], `${o.id} de ${o.customer.name} está listo para despachar`, o.id);
+  await t.run();
+  return {};
+};
+
+const MAX_PHOTOS = 4, MAX_PHOTO_BYTES = 900_000;
+async function addPhoto(env, u, role, orderId, bytes) {
+  need(u, 'verificacion');
+  const { o, version } = await getOrder(env, orderId);
+  if (o.status !== 'por_verificar') throw bad('Solo se suben fotos mientras el pedido está por verificar.');
+  if (o.lines.some(l => shipQty(l) > 0 && !l.verified)) throw bad('Primero verifica todos los productos; luego sube la foto.');
+  if ((o.photos || []).length >= MAX_PHOTOS) throw bad(`Máximo ${MAX_PHOTOS} fotos por pedido. Quita una para subir otra.`);
+  if (!bytes.length) throw bad('La foto está vacía.');
+  if (bytes.length > MAX_PHOTO_BYTES) throw bad('La foto es demasiado pesada.');
+  if (!(bytes[0] === 0xFF && bytes[1] === 0xD8 && bytes[2] === 0xFF)) throw bad('La foto debe ser una imagen JPG.');
+  const t = await tx(env, u, role); const id = uid();
+  o.photos = (o.photos || []).concat([{ id, at: t.t, by: u.id, size: bytes.length }]);
+  t.saveOrder(o, version);
+  t.add(`INSERT INTO photos(id,order_id,mime,size,data,at,by) VALUES (?,?,?,?,?,?,?)`, id, o.id, 'image/jpeg', bytes.length, bytes, t.t, u.id);
+  t.audit('Subió foto del pedido', 'pedido', o.id, `Foto ${o.photos.length} · ${Math.round(bytes.length / 1024)} KB`);
+  await t.run();
+  return { id };
+}
+
+A['photo-delete'] = async (env, u, role, b) => {
+  need(u, 'verificacion');
+  const { o, version } = await getOrder(env, b.id);
+  if (o.status !== 'por_verificar') throw bad('Solo se quitan fotos mientras el pedido está por verificar.');
+  const ph = (o.photos || []).find(x => x.id === b.photoId); if (!ph) throw bad('No se encontró la foto.');
+  const t = await tx(env, u, role);
+  o.photos = o.photos.filter(x => x.id !== ph.id);
+  t.saveOrder(o, version);
+  t.add(`DELETE FROM photos WHERE id = ? AND order_id = ?`, ph.id, o.id);
+  t.audit('Quitó una foto del pedido', 'pedido', o.id, `Subida el ${new Date(ph.at).toLocaleString('es-CO', { timeZone: 'America/Bogota' })}`);
   await t.run();
   return {};
 };
@@ -678,11 +761,12 @@ A['user-create'] = async (env, u, role, b) => {
   if (username.length < 3 || username.length > 30) throw bad('El usuario debe tener entre 3 y 30 letras, números, puntos o guiones.');
   const name = str(b.name, 80); if (!name) throw bad('Escribe el nombre de la persona.');
   const roles = cleanRoles(b.roles); if (!roles.length) throw bad('Asigna al menos un rol.');
+  const email = str(b.email, 120).toLowerCase(); if (!validEmail(email)) throw bad('Revisa el correo.');
   const exists = await env.DB.prepare(`SELECT 1 FROM users WHERE username = ?`).bind(username).first();
   if (exists) throw bad('Ese usuario ya existe. Elige otro.');
   const pw = await newPassword(env, b.password);
   const t = await tx(env, u, role); const id = uid();
-  t.add(`INSERT INTO users(id,username,name,roles,active,pw_hash,pw_salt,pw_iter,must_change,created_at,created_by,rev) VALUES (?,?,?,?,1,?,?,?,1,?,?,?)`, id, username, name, JSON.stringify(roles), pw.pw_hash, pw.pw_salt, pw.pw_iter, t.t, u.id, t.rev);
+  t.add(`INSERT INTO users(id,username,name,roles,active,pw_hash,pw_salt,pw_iter,must_change,created_at,created_by,rev,email,email_on) VALUES (?,?,?,?,1,?,?,?,1,?,?,?,?,?)`, id, username, name, JSON.stringify(roles), pw.pw_hash, pw.pw_salt, pw.pw_iter, t.t, u.id, t.rev, email || null, email && b.emailOn ? 1 : 0);
   t.audit('Creó usuario', 'equipo', username, `${name} · roles: ${roles.map(r => ROLE_NAMES[r]).join(', ')}`);
   await t.run();
   return { id };
@@ -695,16 +779,21 @@ A['user-update'] = async (env, u, role, b) => {
   const roles = b.roles ? cleanRoles(b.roles) : oldRoles;
   const active = b.active === undefined ? !!target.active : !!b.active;
   const name = b.name ? str(b.name, 80) : target.name;
+  const email = b.email === undefined ? (target.email || '') : str(b.email, 120).toLowerCase(); if (!validEmail(email)) throw bad('Revisa el correo.');
+  const emailOn = b.emailOn === undefined ? !!target.email_on : !!b.emailOn;
+  if (emailOn && !email) throw bad('Primero escribe el correo de la persona.');
   if (!roles.length) throw bad('Asigna al menos un rol.');
   const managers = await activeManagers(env);
   if (managers.includes(target.id) && (!roles.includes('gerencia') || !active) && managers.length === 1) throw bad('Debe quedar al menos una persona activa con rol de gerencia.');
   const t = await tx(env, u, role);
-  t.add(`UPDATE users SET name = ?, roles = ?, active = ?, rev = ? WHERE id = ?`, name, JSON.stringify(roles), active ? 1 : 0, t.rev, target.id);
+  t.add(`UPDATE users SET name = ?, roles = ?, active = ?, email = ?, email_on = ?, rev = ? WHERE id = ?`, name, JSON.stringify(roles), active ? 1 : 0, email || null, emailOn ? 1 : 0, t.rev, target.id);
   if (!active) t.add(`DELETE FROM sessions WHERE user_id = ?`, target.id);
   const changes = [];
   if (name !== target.name) changes.push(`Nombre: ${target.name} → ${name}`);
   if (JSON.stringify(roles) !== JSON.stringify(oldRoles)) changes.push(`Roles: ${oldRoles.map(r => ROLE_NAMES[r]).join(', ') || '—'} → ${roles.map(r => ROLE_NAMES[r]).join(', ')}`);
   if (active !== !!target.active) changes.push(active ? 'Desbloqueado' : 'Bloqueado');
+  if (email !== (target.email || '')) changes.push(`Correo: ${target.email || '—'} → ${email || '—'}`);
+  if (emailOn !== !!target.email_on) changes.push(emailOn ? 'Activó avisos por correo' : 'Desactivó avisos por correo');
   t.audit('Editó usuario', 'equipo', target.username, changes.join('; ') || 'sin cambios');
   if (JSON.stringify(roles) !== JSON.stringify(oldRoles)) t.notify([], [target.id], `Gerencia cambió tus roles: ${roles.map(r => ROLE_NAMES[r]).join(', ')}`, '');
   await t.run();
@@ -723,6 +812,16 @@ A['user-reset'] = async (env, u, role, b) => {
   return {};
 };
 
+A['mail-test'] = async (env, u, role, b) => {
+  need(u, 'gerencia');
+  if (!mailConfigured(env)) throw bad('Falta configurar el correo en Cloudflare (BREVO_API_KEY y MAIL_FROM).');
+  const target = await env.DB.prepare(`SELECT id, name, email FROM users WHERE id = ?`).bind(str(b.id || u.id, 60)).first();
+  if (!target || !target.email) throw bad('Esa persona no tiene correo registrado.');
+  if (!(await mailQuota(env, 1))) throw bad('Se alcanzó el límite diario de correos. Intenta mañana.');
+  await brevoSend(env, target, 'Prueba de avisos · Ferro Pedidos', ['Este es un correo de prueba. Si lo recibes, los avisos por correo funcionan.', 'Si llegó a spam, márcalo como "No es spam" para que los siguientes lleguen a la bandeja de entrada.'], (env.PUBLIC_URL || '') + '/');
+  return { to: target.email };
+};
+
 // ---------- sincronización ----------
 async function sync(env, u, since) {
   const D = env.DB;
@@ -735,7 +834,7 @@ async function sync(env, u, since) {
     q(`SELECT id,data,rev FROM orders WHERE rev > ?`, since),
     q(`SELECT id,data,status,rev FROM price_requests WHERE rev > ?`, since),
     q(`SELECT id,data,rev FROM remisiones WHERE rev > ?`, since),
-    q(`SELECT id,username,name,roles,active,rev FROM users WHERE rev > ?`, since),
+    q(`SELECT id,username,name,roles,active,email,email_on,rev FROM users WHERE rev > ?`, since),
     q(`SELECT * FROM notifications WHERE rev > ? ORDER BY id DESC LIMIT 400`, since),
     q(`SELECT notification_id FROM notification_reads WHERE user_id = ? AND rev > ?`, u.id, since),
     q(`SELECT audit_seen FROM prefs WHERE user_id = ?`, u.id),
@@ -751,7 +850,8 @@ async function sync(env, u, since) {
     orders: rows(3).map(o => JSON.parse(o.data)),
     requests: rows(4).map(x => ({ id: x.id, ...JSON.parse(x.data), status: x.status })),
     remisiones: rows(5).map(x => JSON.parse(x.data)),
-    users: rows(6).map(x => ({ id: x.id, username: isG ? x.username : undefined, name: x.name, roles: parse(x.roles) || [], active: !!x.active })),
+    users: rows(6).map(x => ({ id: x.id, username: isG ? x.username : undefined, name: x.name, roles: parse(x.roles) || [], active: !!x.active, email: isG ? (x.email || '') : undefined, emailOn: isG ? !!x.email_on : undefined })),
+    mailConfigured: isG ? mailConfigured(env) : undefined,
     notifications: rows(7).filter(mine).map(n => ({ id: n.id, at: n.at, by: n.by, text: n.text, ref: n.ref })),
     reads: rows(8).map(x => x.notification_id),
     auditSeen: (rows(9)[0] || {}).audit_seen || 0,
@@ -762,7 +862,7 @@ async function sync(env, u, since) {
 
 async function exportAll(env) {
   const tables = ['products', 'price_history', 'customers', 'orders', 'price_requests', 'remisiones', 'notifications', 'audit'];
-  const r = await env.DB.batch([...tables.map(tn => env.DB.prepare(`SELECT * FROM ${tn}`)), env.DB.prepare(`SELECT id,username,name,roles,active,created_at FROM users`), env.DB.prepare(`SELECT * FROM counters`)]);
+  const r = await env.DB.batch([...tables.map(tn => env.DB.prepare(`SELECT * FROM ${tn}`)), env.DB.prepare(`SELECT id,username,name,roles,active,email,email_on,created_at FROM users`), env.DB.prepare(`SELECT * FROM counters`)]);
   const out = { exportedAt: new Date().toISOString() };
   tables.forEach((tn, i) => out[tn] = r[i].results);
   out.users = r[tables.length].results; out.counters = r[tables.length + 1].results;
@@ -899,6 +999,19 @@ async function route(req, env, url) {
   if (path === '/api/export' && req.method === 'GET') {
     need(u, 'gerencia');
     return new Response(JSON.stringify(await exportAll(env)), { headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', 'content-disposition': `attachment; filename="respaldo-ferrodistribuciones-${new Date().toISOString().slice(0, 10)}.json"` } });
+  }
+
+  if (path === '/api/photo' && req.method === 'POST') {
+    const len = Number(req.headers.get('content-length') || 0);
+    if (len > MAX_PHOTO_BYTES) throw bad('La foto es demasiado pesada.');
+    const bytes = new Uint8Array(await req.arrayBuffer());
+    const role = u.roles.includes(req.headers.get('x-role')) ? req.headers.get('x-role') : (u.roles[0] || '');
+    return json({ ok: true, ...(await addPhoto(env, u, role, str(url.searchParams.get('order'), 20), bytes)) });
+  }
+  if (path === '/api/photo' && req.method === 'GET') {
+    const r = await env.DB.prepare(`SELECT mime, data FROM photos WHERE id = ?`).bind(str(url.searchParams.get('id'), 60)).first();
+    if (!r) throw new HttpError(404, 'No se encontró la foto.');
+    return new Response(new Uint8Array(r.data), { headers: { 'content-type': r.mime, 'cache-control': 'private, max-age=604800, immutable', 'x-content-type-options': 'nosniff' } });
   }
 
   if (path === '/api/action' && req.method === 'POST') {
